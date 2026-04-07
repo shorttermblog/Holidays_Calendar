@@ -45,7 +45,6 @@ README_EXCHANGE_NAMES: dict[str, str] = {
     "XSTO": "Stockholm Stock Exchange",
     "XOSL": "Oslo Stock Exchange",
     "XDUB": "Irish Stock Exchange",
-    "XSHG": "Shanghai Stock Exchange",
     "XKRX": "Korea Exchange",
     "XICE": "Iceland Stock Exchange",
     "XWAR": "Poland Stock Exchange",
