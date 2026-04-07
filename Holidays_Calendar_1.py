@@ -288,7 +288,7 @@ def main():
 
     default_labels = [
         label for label, code in exchange_label_to_code.items()
-        if code == "XMIL"
+        if code == "XNYS"
     ]
 
     with st.sidebar:
