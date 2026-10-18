@@ -260,12 +260,16 @@ def _adhoc_holidays_df(
     XSHG expose their holiday dates here.
     """
 
-    adhoc_list = list(
-        getattr(
-            cal,
-            "adhoc_holidays",
-            [],
-        )
+   adhoc_holidays = getattr(
+    cal,
+    "adhoc_holidays",
+    None,
+)
+
+if adhoc_holidays is None:
+    return _empty_holiday_df()
+
+adhoc_list = list(adhoc_holidays)
         or []
     )
 
