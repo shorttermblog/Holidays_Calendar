@@ -4,10 +4,10 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 
+import exchange_calendars as ec
 import pandas as pd
 import requests
 import streamlit as st
-import exchange_calendars as ec
 
 
 # ----------------------------
@@ -85,7 +85,7 @@ README_EXCHANGE_NAMES: dict[str, str] = {
     "XBRA": "Bratislava Stock Exchange",
     "XBEL": "Belgrade Stock Exchange",
 
-    # Added / important Asian exchanges
+    # Additional Asian exchanges
     "XBOM": "BSE (Bombay Stock Exchange)",
     "XSES": "Singapore Exchange",
     "XSHG": "Shanghai Stock Exchange",
@@ -93,10 +93,8 @@ README_EXCHANGE_NAMES: dict[str, str] = {
 }
 
 
-# Exchanges not implemented natively by exchange_calendars
-CUSTOM_EXCHANGE_CODES = {
-    "XNSE",
-}
+# XNSE is not handled natively by exchange_calendars.
+CUSTOM_EXCHANGE_CODES = {"XNSE"}
 
 
 @st.cache_data
@@ -104,12 +102,10 @@ def build_exchanges_from_readme(
     include_aliases: bool = False,
 ) -> list[ExchangeOption]:
     """
-    Build the list of exchanges shown in the UI.
+    Build the exchange list shown in the UI.
 
-    Normal exchanges must exist in exchange_calendars.
-
-    Custom exchanges, currently XNSE, are handled
-    separately by this application.
+    Native exchanges must exist in exchange_calendars.
+    Custom exchanges are explicitly included.
     """
 
     available = set(
@@ -121,11 +117,7 @@ def build_exchanges_from_readme(
     options: list[ExchangeOption] = []
 
     for code, name in README_EXCHANGE_NAMES.items():
-
-        if (
-            code in available
-            or code in CUSTOM_EXCHANGE_CODES
-        ):
+        if code in available or code in CUSTOM_EXCHANGE_CODES:
             options.append(
                 ExchangeOption(
                     label=f"{name} [{code}]",
@@ -149,12 +141,12 @@ EXCHANGES = build_exchanges_from_readme(
 
 
 # ----------------------------
-# Holidays extraction
+# Common helpers
 # ----------------------------
 
 def _empty_holiday_df() -> pd.DataFrame:
     """
-    Return a consistently structured empty holiday dataframe.
+    Return an empty holiday dataframe with consistent columns.
     """
 
     return pd.DataFrame(
@@ -166,6 +158,10 @@ def _empty_holiday_df() -> pd.DataFrame:
     )
 
 
+# ----------------------------
+# exchange_calendars extraction
+# ----------------------------
+
 def _regular_holidays_df(
     cal,
     exchange_code: str,
@@ -175,15 +171,8 @@ def _regular_holidays_df(
     """
     Return regular holidays for an exchange.
 
-    Some exchange_calendars calendars, including
-    XBOM, XSES and XSHG, are precomputed calendars.
-
-    For those calendars regular_holidays can be None.
-    Their closures are instead exposed through
-    adhoc_holidays.
-
-    Therefore regular_holidays must not be called
-    unconditionally.
+    Some precomputed calendars, including XBOM, XSES
+    and XSHG, can have regular_holidays = None.
     """
 
     regular_calendar = getattr(
@@ -201,25 +190,16 @@ def _regular_holidays_df(
         return_name=True,
     )
 
-    if isinstance(
-        regular_holidays,
-        pd.Series,
-    ):
-
+    if isinstance(regular_holidays, pd.Series):
         df = (
             regular_holidays
             .rename("holiday")
             .to_frame()
             .reset_index()
-            .rename(
-                columns={
-                    "index": "date",
-                }
-            )
+            .rename(columns={"index": "date"})
         )
 
     else:
-
         df = pd.DataFrame(
             {
                 "date": pd.to_datetime(
@@ -233,10 +213,7 @@ def _regular_holidays_df(
         return _empty_holiday_df()
 
     df["exchange"] = exchange_code
-
-    df["date"] = pd.to_datetime(
-        df["date"]
-    )
+    df["date"] = pd.to_datetime(df["date"])
 
     return df[
         [
@@ -254,31 +231,36 @@ def _adhoc_holidays_df(
     end: pd.Timestamp,
 ) -> pd.DataFrame:
     """
-    Return ad-hoc or precomputed exchange holidays.
+    Return ad-hoc or precomputed holidays.
 
-    Precomputed calendars such as XBOM, XSES and
-    XSHG expose their holiday dates here.
+    Precomputed calendars such as XBOM, XSES and XSHG
+    can expose their holiday dates through adhoc_holidays.
+
+    Important:
+    adhoc_holidays may be a pandas DatetimeIndex.
+    It must NOT be evaluated directly as a boolean.
     """
 
-   adhoc_holidays = getattr(
-    cal,
-    "adhoc_holidays",
-    None,
-)
-
-if adhoc_holidays is None:
-    return _empty_holiday_df()
-
-adhoc_list = list(adhoc_holidays)
-        or []
+    adhoc_holidays = getattr(
+        cal,
+        "adhoc_holidays",
+        None,
     )
 
-    if not adhoc_list:
+    if adhoc_holidays is None:
+        return _empty_holiday_df()
+
+    adhoc_list = list(adhoc_holidays)
+
+    if len(adhoc_list) == 0:
         return _empty_holiday_df()
 
     adhoc_dates = pd.to_datetime(
         adhoc_list
     )
+
+    start = pd.Timestamp(start)
+    end = pd.Timestamp(end)
 
     adhoc_dates = adhoc_dates[
         (adhoc_dates >= start)
@@ -294,9 +276,7 @@ adhoc_list = list(adhoc_holidays)
                 adhoc_dates
             ),
             "exchange": exchange_code,
-            "holiday": (
-                "Holiday / special closing"
-            ),
+            "holiday": "Holiday / special closing",
         }
     )
 
@@ -313,9 +293,7 @@ adhoc_list = list(adhoc_holidays)
 # NSE India custom calendar
 # ----------------------------
 
-NSE_HOME_URL = (
-    "https://www.nseindia.com"
-)
+NSE_HOME_URL = "https://www.nseindia.com"
 
 NSE_HOLIDAY_URL = (
     "https://www.nseindia.com/api/holiday-master"
@@ -324,7 +302,7 @@ NSE_HOLIDAY_URL = (
 
 def _nse_headers() -> dict[str, str]:
     """
-    Browser-like headers used when communicating with NSE.
+    Browser-like headers for NSE requests.
     """
 
     return {
@@ -336,17 +314,11 @@ def _nse_headers() -> dict[str, str]:
             "Chrome/154.0.0.0 "
             "Safari/537.36"
         ),
-        "Accept": (
-            "application/json, "
-            "text/plain, */*"
-        ),
-        "Accept-Language": (
-            "en-US,en;q=0.9"
-        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
         "Referer": (
             "https://www.nseindia.com/"
-            "resources/"
-            "exchange-communication-holidays"
+            "resources/exchange-communication-holidays"
         ),
         "Connection": "keep-alive",
     }
@@ -362,23 +334,20 @@ def _fetch_nse_holidays_for_year(
     """
     Fetch official NSE Capital Market trading holidays.
 
-    NSE JSON contains several market segments.
-
-    CM = Capital Market / cash-equity market.
+    CM = Capital Market / cash equities.
     """
 
     headers = _nse_headers()
 
     with requests.Session() as session:
 
-        # NSE generally expects browser cookies.
-        # Visit the home page first to initialise
-        # the session.
-        session.get(
+        # Establish NSE cookies/session.
+        home_response = session.get(
             NSE_HOME_URL,
             headers=headers,
             timeout=20,
         )
+        home_response.raise_for_status()
 
         response = session.get(
             NSE_HOLIDAY_URL,
@@ -390,20 +359,17 @@ def _fetch_nse_holidays_for_year(
             timeout=30,
         )
 
-        # NSE may reject the first session.
-        # Retry once with fresh cookies.
-        if response.status_code in {
-            401,
-            403,
-        }:
+        # Retry once if NSE rejects the initial session.
+        if response.status_code in {401, 403}:
 
             session.cookies.clear()
 
-            session.get(
+            home_response = session.get(
                 NSE_HOME_URL,
                 headers=headers,
                 timeout=20,
             )
+            home_response.raise_for_status()
 
             response = session.get(
                 NSE_HOLIDAY_URL,
@@ -419,29 +385,19 @@ def _fetch_nse_holidays_for_year(
 
         payload = response.json()
 
-    rows = payload.get(
-        "CM"
-    )
+    rows = payload.get("CM")
 
-    if not isinstance(
-        rows,
-        list,
-    ):
+    if not isinstance(rows, list):
         raise RuntimeError(
-            "NSE holiday response does not "
-            "contain the expected 'CM' "
-            "Capital Market segment."
+            "NSE holiday response does not contain "
+            "the expected 'CM' Capital Market segment."
         )
 
-    records: list[
-        dict[str, object]
-    ] = []
+    records: list[dict[str, object]] = []
 
     for row in rows:
 
-        raw_date = row.get(
-            "tradingDate"
-        )
+        raw_date = row.get("tradingDate")
 
         if not raw_date:
             continue
@@ -455,24 +411,17 @@ def _fetch_nse_holidays_for_year(
         if pd.isna(date):
             continue
 
-        # NSE may also include holidays that
-        # happen on Saturday or Sunday.
-        #
-        # These are normal non-trading days
-        # rather than additional closures.
+        # Exclude normal weekend non-trading days.
         if date.weekday() >= 5:
             continue
 
-        # Safety check in case the API returns
-        # dates outside the requested year.
+        # Protect against API data outside requested year.
         if date.year != year:
             continue
 
         holiday = (
             row.get("description")
-            or row.get(
-                "holidayDescription"
-            )
+            or row.get("holidayDescription")
             or "NSE trading holiday"
         )
 
@@ -480,25 +429,19 @@ def _fetch_nse_holidays_for_year(
             {
                 "date": date.normalize(),
                 "exchange": "XNSE",
-                "holiday": (
-                    str(holiday).strip()
-                ),
+                "holiday": str(holiday).strip(),
             }
         )
 
     if not records:
-
         raise RuntimeError(
-            f"NSE returned no weekday "
-            f"Capital Market holidays "
-            f"for {year}. "
-            f"The calendar for that year "
-            f"may not yet have been published."
+            f"NSE returned no weekday Capital Market "
+            f"holidays for {year}. "
+            f"The calendar for that year may not yet "
+            f"have been published."
         )
 
-    result = pd.DataFrame(
-        records
-    )
+    result = pd.DataFrame(records)
 
     result = (
         result
@@ -521,9 +464,7 @@ def _fetch_nse_holidays_for_year(
                 True,
             ],
         )
-        .reset_index(
-            drop=True
-        )
+        .reset_index(drop=True)
     )
 
     return result[
@@ -540,17 +481,11 @@ def _closures_for_nse(
     end: pd.Timestamp,
 ) -> pd.DataFrame:
     """
-    Return NSE India cash-equity holiday closures
-    within the requested interval.
+    Return NSE cash-equity closures in the requested range.
     """
 
-    start = pd.Timestamp(
-        start
-    ).normalize()
-
-    end = pd.Timestamp(
-        end
-    ).normalize()
+    start = pd.Timestamp(start).normalize()
+    end = pd.Timestamp(end).normalize()
 
     if end < start:
         return _empty_holiday_df()
@@ -562,16 +497,12 @@ def _closures_for_nse(
         end.year + 1,
     ):
 
-        year_df = (
-            _fetch_nse_holidays_for_year(
-                year
-            )
+        year_df = _fetch_nse_holidays_for_year(
+            year
         )
 
         if not year_df.empty:
-            frames.append(
-                year_df
-            )
+            frames.append(year_df)
 
     if not frames:
         return _empty_holiday_df()
@@ -611,9 +542,7 @@ def _closures_for_nse(
                 True,
             ],
         )
-        .reset_index(
-            drop=True
-        )
+        .reset_index(drop=True)
     )
 
     return result[
@@ -626,7 +555,7 @@ def _closures_for_nse(
 
 
 # ----------------------------
-# Common exchange dispatcher
+# Exchange dispatcher
 # ----------------------------
 
 def _closures_for_exchange(
@@ -635,17 +564,16 @@ def _closures_for_exchange(
     end: pd.Timestamp,
 ) -> pd.DataFrame:
     """
-    Return all closures for a single exchange.
+    Return holiday closures for one exchange.
 
     XNSE:
         custom NSE implementation.
 
-    All other exchanges:
+    Everything else:
         exchange_calendars.
     """
 
     if exchange_code == "XNSE":
-
         return _closures_for_nse(
             start=start,
             end=end,
@@ -655,35 +583,27 @@ def _closures_for_exchange(
         exchange_code
     )
 
-    regular_df = (
-        _regular_holidays_df(
-            cal,
-            exchange_code,
-            start,
-            end,
-        )
+    regular_df = _regular_holidays_df(
+        cal=cal,
+        exchange_code=exchange_code,
+        start=start,
+        end=end,
     )
 
-    adhoc_df = (
-        _adhoc_holidays_df(
-            cal,
-            exchange_code,
-            start,
-            end,
-        )
+    adhoc_df = _adhoc_holidays_df(
+        cal=cal,
+        exchange_code=exchange_code,
+        start=start,
+        end=end,
     )
 
     frames: list[pd.DataFrame] = []
 
     if not regular_df.empty:
-        frames.append(
-            regular_df
-        )
+        frames.append(regular_df)
 
     if not adhoc_df.empty:
-        frames.append(
-            adhoc_df
-        )
+        frames.append(adhoc_df)
 
     if not frames:
         return _empty_holiday_df()
@@ -714,9 +634,7 @@ def _closures_for_exchange(
                 True,
             ],
         )
-        .reset_index(
-            drop=True
-        )
+        .reset_index(drop=True)
     )
 
     return result[
@@ -742,12 +660,12 @@ def build_table(
     view_mode: str,
 ) -> pd.DataFrame:
     """
-    Build the raw dataframe.
+    Build the holiday dataframe.
 
-    Long view:
+    Long:
         date, exchange, holiday
 
-    Wide view:
+    Wide:
         date + one column per exchange
     """
 
@@ -758,33 +676,23 @@ def build_table(
 
     for code in exchanges:
 
-        exchange_df = (
-            _closures_for_exchange(
-                code,
-                start,
-                end,
-            )
+        exchange_df = _closures_for_exchange(
+            exchange_code=code,
+            start=start,
+            end=end,
         )
 
         if not exchange_df.empty:
-            frames.append(
-                exchange_df
-            )
+            frames.append(exchange_df)
 
-    # Important:
-    # selected exchanges may legitimately
-    # have no holidays in a short interval.
     if not frames:
 
         if view_mode == "Wide":
-
-            columns = [
-                "date",
-                *exchanges,
-            ]
-
             return pd.DataFrame(
-                columns=columns
+                columns=[
+                    "date",
+                    *exchanges,
+                ]
             )
 
         return _empty_holiday_df()
@@ -808,9 +716,7 @@ def build_table(
                 True,
             ],
         )
-        .reset_index(
-            drop=True
-        )
+        .reset_index(drop=True)
     )
 
     if view_mode == "Wide":
@@ -821,15 +727,10 @@ def build_table(
                 index="date",
                 columns="exchange",
                 values="holiday",
-                aggfunc=lambda s: (
-                    " | ".join(
-                        sorted(
-                            set(
-                                map(
-                                    str,
-                                    s,
-                                )
-                            )
+                aggfunc=lambda s: " | ".join(
+                    sorted(
+                        set(
+                            map(str, s)
                         )
                     )
                 ),
@@ -844,7 +745,6 @@ def build_table(
         )
 
         wide = wide.reset_index()
-
         wide.columns.name = None
 
         return wide
@@ -859,14 +759,14 @@ def build_table(
 
 
 # ----------------------------
-# Display / export preparation
+# Display / export
 # ----------------------------
 
 def prepare_df_for_view(
     df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Return a dataframe prepared for Streamlit display.
+    Prepare dataframe for Streamlit display.
     """
 
     if df.empty:
@@ -891,17 +791,14 @@ def prepare_df_for_output(
     df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Return a dataframe prepared for CSV/Excel export.
+    Prepare dataframe for CSV / Excel export.
     """
 
     out = df.copy()
 
     if "_date_sort" in out.columns:
-
         out = out.drop(
-            columns=[
-                "_date_sort"
-            ]
+            columns=["_date_sort"]
         )
 
     if "date" in out.columns:
@@ -922,25 +819,17 @@ def dataframe_to_csv_bytes(
     df: pd.DataFrame,
 ) -> bytes:
     """
-    Convert dataframe to UTF-8 CSV bytes.
+    Convert dataframe to CSV bytes.
     """
 
-    export_df = (
-        prepare_df_for_output(
-            df
-        )
+    export_df = prepare_df_for_output(
+        df
     )
 
-    return (
-        export_df
-        .to_csv(
-            index=False,
-            encoding="utf-8",
-        )
-        .encode(
-            "utf-8"
-        )
-    )
+    return export_df.to_csv(
+        index=False,
+        encoding="utf-8",
+    ).encode("utf-8")
 
 
 def dataframe_to_excel_bytes(
@@ -950,10 +839,8 @@ def dataframe_to_excel_bytes(
     Convert dataframe to XLSX bytes.
     """
 
-    export_df = (
-        prepare_df_for_output(
-            df
-        )
+    export_df = prepare_df_for_output(
+        df
     )
 
     buffer = io.BytesIO()
@@ -1058,42 +945,23 @@ def main():
     # Session state
     # ----------------------------
 
-    if (
-        "generated"
-        not in st.session_state
-    ):
+    if "generated" not in st.session_state:
         st.session_state.generated = False
 
-    if (
-        "raw_df"
-        not in st.session_state
-    ):
-        st.session_state.raw_df = (
-            pd.DataFrame()
-        )
+    if "raw_df" not in st.session_state:
+        st.session_state.raw_df = pd.DataFrame()
 
-    if (
-        "view_df"
-        not in st.session_state
-    ):
-        st.session_state.view_df = (
-            pd.DataFrame()
-        )
+    if "view_df" not in st.session_state:
+        st.session_state.view_df = pd.DataFrame()
 
-    if (
-        "selected_codes"
-        not in st.session_state
-    ):
+    if "selected_codes" not in st.session_state:
         st.session_state.selected_codes = []
 
-    if (
-        "view_mode"
-        not in st.session_state
-    ):
+    if "view_mode" not in st.session_state:
         st.session_state.view_mode = "Long"
 
     # ----------------------------
-    # Generate
+    # Generate table
     # ----------------------------
 
     if generate:
@@ -1115,11 +983,8 @@ def main():
 
             selected_codes = sorted(
                 {
-                    exchange_label_to_code[
-                        label
-                    ]
-                    for label
-                    in selected_labels
+                    exchange_label_to_code[label]
+                    for label in selected_labels
                 }
             )
 
@@ -1133,9 +998,7 @@ def main():
 
             view_mode = (
                 "Wide"
-                if view_label.startswith(
-                    "Wide"
-                )
+                if view_label.startswith("Wide")
                 else "Long"
             )
 
@@ -1148,10 +1011,8 @@ def main():
                     view_mode=view_mode,
                 )
 
-                view_df = (
-                    prepare_df_for_view(
-                        raw_df
-                    )
+                view_df = prepare_df_for_view(
+                    raw_df
                 )
 
             except ModuleNotFoundError as exc:
@@ -1159,46 +1020,29 @@ def main():
                 st.error(
                     f"Missing dependency: {exc}"
                 )
-
                 return
 
             except requests.RequestException as exc:
 
                 st.error(
-                    "Unable to retrieve NSE "
-                    "holiday data: "
+                    "Unable to retrieve NSE holiday data: "
                     f"{exc}"
                 )
-
                 return
 
             except Exception as exc:
 
                 st.error(
                     "Error while calculating "
-                    "exchange closures: "
-                    f"{exc}"
+                    f"exchange closures: {exc}"
                 )
-
                 return
 
             st.session_state.generated = True
-
-            st.session_state.raw_df = (
-                raw_df
-            )
-
-            st.session_state.view_df = (
-                view_df
-            )
-
-            st.session_state.selected_codes = (
-                selected_codes
-            )
-
-            st.session_state.view_mode = (
-                view_mode
-            )
+            st.session_state.raw_df = raw_df
+            st.session_state.view_df = view_df
+            st.session_state.selected_codes = selected_codes
+            st.session_state.view_mode = view_mode
 
     # ----------------------------
     # Results
@@ -1206,25 +1050,13 @@ def main():
 
     if st.session_state.generated:
 
-        raw_df = (
-            st.session_state.raw_df
-        )
-
-        view_df = (
-            st.session_state.view_df
-        )
-
-        selected_codes = (
-            st.session_state.selected_codes
-        )
-
-        view_mode = (
-            st.session_state.view_mode
-        )
+        raw_df = st.session_state.raw_df
+        view_df = st.session_state.view_df
+        selected_codes = st.session_state.selected_codes
+        view_mode = st.session_state.view_mode
 
         st.info(
-            f"Exchanges: "
-            f"{', '.join(selected_codes)} | "
+            f"Exchanges: {', '.join(selected_codes)} | "
             f"Rows: {len(view_df)} | "
             f"View: {view_mode}"
         )
@@ -1244,18 +1076,14 @@ def main():
                 hide_index=True,
             )
 
-            col1, col2 = st.columns(
-                2
-            )
+            col1, col2 = st.columns(2)
 
             with col1:
 
                 st.download_button(
                     label="Download CSV",
-                    data=(
-                        dataframe_to_csv_bytes(
-                            raw_df
-                        )
+                    data=dataframe_to_csv_bytes(
+                        raw_df
                     ),
                     file_name="holidays.csv",
                     mime="text/csv",
@@ -1266,10 +1094,8 @@ def main():
 
                 try:
 
-                    excel_bytes = (
-                        dataframe_to_excel_bytes(
-                            raw_df
-                        )
+                    excel_bytes = dataframe_to_excel_bytes(
+                        raw_df
                     )
 
                     st.download_button(
@@ -1287,17 +1113,17 @@ def main():
                 except ModuleNotFoundError:
 
                     st.warning(
-                        "The 'openpyxl' package "
-                        "is missing. Install it with: "
+                        "The 'openpyxl' package is missing. "
+                        "Install it with: "
                         "pip install openpyxl"
                     )
 
     else:
 
         st.write(
-            "Choose exchanges, date range, "
-            "and view mode from the sidebar, "
-            "then click **Generate table**."
+            "Choose exchanges, date range, and view mode "
+            "from the sidebar, then click "
+            "**Generate table**."
         )
 
 
