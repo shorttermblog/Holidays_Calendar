@@ -341,14 +341,22 @@ def _fetch_nse_holidays_for_year(
 
     with requests.Session() as session:
 
-        # Establish NSE cookies/session.
-        home_response = session.get(
-            NSE_HOME_URL,
-            headers=headers,
-            timeout=20,
-        )
-        home_response.raise_for_status()
+        # Attempt to initialise NSE cookies.
+        #
+        # IMPORTANT:
+        # NSE may return 403 for the homepage even though
+        # the API endpoint itself remains accessible.
+        # Therefore DO NOT call raise_for_status() here.
+        try:
+            session.get(
+                NSE_HOME_URL,
+                headers=headers,
+                timeout=20,
+            )
+        except requests.RequestException:
+            pass
 
+        # Actual holiday API request
         response = session.get(
             NSE_HOLIDAY_URL,
             params={
@@ -359,17 +367,20 @@ def _fetch_nse_holidays_for_year(
             timeout=30,
         )
 
-        # Retry once if NSE rejects the initial session.
+        # If NSE rejects the API call, try once again
+        # after refreshing the session/cookies.
         if response.status_code in {401, 403}:
 
             session.cookies.clear()
 
-            home_response = session.get(
-                NSE_HOME_URL,
-                headers=headers,
-                timeout=20,
-            )
-            home_response.raise_for_status()
+            try:
+                session.get(
+                    NSE_HOME_URL,
+                    headers=headers,
+                    timeout=20,
+                )
+            except requests.RequestException:
+                pass
 
             response = session.get(
                 NSE_HOLIDAY_URL,
@@ -381,6 +392,7 @@ def _fetch_nse_holidays_for_year(
                 timeout=30,
             )
 
+        # ONLY the actual API response is required to succeed.
         response.raise_for_status()
 
         payload = response.json()
@@ -411,11 +423,11 @@ def _fetch_nse_holidays_for_year(
         if pd.isna(date):
             continue
 
-        # Exclude normal weekend non-trading days.
+        # Exclude ordinary Saturday/Sunday closures.
         if date.weekday() >= 5:
             continue
 
-        # Protect against API data outside requested year.
+        # Ignore data outside requested year.
         if date.year != year:
             continue
 
@@ -474,7 +486,6 @@ def _fetch_nse_holidays_for_year(
             "holiday",
         ]
     ]
-
 
 def _closures_for_nse(
     start: pd.Timestamp,
